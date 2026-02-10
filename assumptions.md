@@ -30,6 +30,20 @@ Pre-implementation notes for `sh-apk-api` — the Samsung Health "truth layer" i
 - Railway auto-provides `DATABASE_URL`. The code rewrites `postgresql://` → `postgresql+asyncpg://` at runtime.
 - The Dockerfile exposes port `8000`; Railway's proxy handles TLS termination and public routing.
 
+### Android Bridge APK (Client)
+- Tech stack: **Kotlin**, **AndroidX**, **WorkManager**, official Samsung Health SDK.
+- App structure: single-Activity setup UI only; no ongoing UI after initial configuration.
+- Scheduling: a `WorkManager` job runs **once per day at ~02:30 local time**, using a periodic `WorkRequest` with appropriate flex time.
+- Reported date: the payload `date` is the **local “yesterday” calendar date**; the job always reports for yesterday so the day is complete.
+- `collected_at`: an ISO-8601 timestamp of when the worker actually runs (ideally in UTC, with offset).
+- `device_id`: a stable `UUID` generated once on first run and stored in `SharedPreferences`; reused for all future requests from that phone.
+- Networking: HTTP `POST` to `/v1/ingest/shealth/daily` with a static `X-API-Key` header value sourced from `BuildConfig` (no runtime editing).
+- Heart rate: **only** send `heart_rate_summary` if `resting_hr` is available from Samsung Health; otherwise **omit** `heart_rate_summary` entirely (no best-effort mix of other stats).
+- Failure policy: **no backfill**. If a run fails (no network, permission error, server issue), that day’s data is skipped; we try again on the next scheduled run for that new “yesterday”.
+- WorkManager constraints: requires `networkType = CONNECTED` and uses **exponential backoff** for transient failures, letting WorkManager handle retries.
+- Android targets: `minSdk = 26`, `targetSdk = latest stable` (to be updated as Android releases advance).
+- Endpoint config: base URL and API key are defined via **`BuildConfig` and build flavors** (e.g. `staging` vs `prod`); there is **no in-app debug/preferences screen** for overriding them.
+
 ---
 
 ## Placeholders

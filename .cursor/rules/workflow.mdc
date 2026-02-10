@@ -1,0 +1,78 @@
+---
+description: AI-assisted development workflow for all sh-apk-api work
+alwaysApply: true
+---
+
+# Cursor AI Workflow Rules (Project)
+
+This project follows a structured AI-assisted development workflow. **Always follow these rules:**
+
+## Core Principles
+
+1. **Follow the workflow documentation** – Read and follow the guidelines in:
+   - `docs/ai/CONSTRAINTS.md` – Development constraints and boundaries
+   - `docs/ai/WORKFLOW.md` – Default development workflow
+   - `docs/ai/DEFINITION_OF_DONE.md` – Completion checklist
+
+2. **Use task files** – When starting any work:
+   - Create or reference `tasks/TASK-<slug>.md` as the source of truth
+   - Follow the task structure: Goal, Non-goals, Blast radius, Acceptance checks, Test plan
+
+3. **Small, verified changes**:
+   - One checkpoint per message/change
+   - Run tests/build after each change
+   - Commit checkpoints frequently with clear messages
+   - Never stack unverified changes
+
+4. **Scope control**:
+   - Only modify files explicitly mentioned or directly required
+   - No drive-by edits outside requested files
+   - No new dependencies unless requested
+   - Prefer the smallest change that works
+
+5. **Stop and clarify when needed**:
+   - If requirements are ambiguous
+   - If there's uncertainty about a decision
+   - If something conflicts with constraints
+
+## Default Workflow
+
+When starting any task:
+
+1. Reference or create a task file in `tasks/TASK-<slug>.md`.
+2. Write a step-by-step plan (max 5–8 steps) with verification per step.
+3. Implement one step at a time.
+4. Verify after each step (tests, lint, build, or manual check).
+5. Commit checkpoints: `TASK: <slug> step <N> - <what changed>`.
+6. Repeat until all acceptance checks are met.
+
+## Code Style
+
+- Follow existing code patterns in the repository.
+- Use minimal header formatting.
+- Prefer concise comments and simple variable names.
+- Keep summaries casual or omit them when not needed.
+
+## Definition of Done
+
+Before declaring a task done, ensure (see also `docs/ai/DEFINITION_OF_DONE.md`):
+
+- [ ] Tests pass
+- [ ] Lint passes
+- [ ] Acceptance checks are met
+- [ ] No unrelated diffs
+- [ ] Code is readable
+- [ ] Build succeeds
+
+## When to Escalate
+
+Stop and ask for a human decision on:
+
+- Architectural changes (new modules, data models, major flows)
+- Auth/security/permissions/payment logic
+- Ambiguous requirements
+- Proposed new dependencies or major refactors
+- Any change that can't be clearly explained
+
+Remember: you're orchestrating a semi-competent gremlin with hands. Give it tight scope, explicit done conditions, short checkpoints, validation every step, and small commits.
+
