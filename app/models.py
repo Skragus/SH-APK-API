@@ -17,6 +17,9 @@ class ShealthDaily(Base):
     steps_total = Column(Integer, nullable=False)
     sleep_sessions = Column(JSONB, nullable=True)
     heart_rate_summary = Column(JSONB, nullable=True)
+    body_metrics = Column(JSONB, nullable=True)
+    nutrition_summary = Column(JSONB, nullable=True)
+    exercise_sessions = Column(JSONB, nullable=True)
     source = Column(JSONB, nullable=False)
 
     collected_at = Column(DateTime(timezone=True), nullable=False)

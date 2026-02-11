@@ -55,7 +55,16 @@ async def ingest_daily_stats(
         "schema_version": payload.schema_version,
         "steps_total": payload.steps_total,
         "sleep_sessions": payload.sleep_sessions,
-        "heart_rate_summary": payload.heart_rate_summary,
+        "heart_rate_summary": payload.heart_rate_summary.model_dump(mode="json")
+        if payload.heart_rate_summary
+        else None,
+        "body_metrics": payload.body_metrics.model_dump(mode="json")
+        if payload.body_metrics
+        else None,
+        "nutrition_summary": payload.nutrition_summary.model_dump(mode="json")
+        if payload.nutrition_summary
+        else None,
+        "exercise_sessions": payload.exercise_sessions,
         "source": payload.source.model_dump(mode="json"),
         "collected_at": payload.source.collected_at,
     }
@@ -68,6 +77,9 @@ async def ingest_daily_stats(
             "steps_total": stmt.excluded.steps_total,
             "sleep_sessions": stmt.excluded.sleep_sessions,
             "heart_rate_summary": stmt.excluded.heart_rate_summary,
+            "body_metrics": stmt.excluded.body_metrics,
+            "nutrition_summary": stmt.excluded.nutrition_summary,
+            "exercise_sessions": stmt.excluded.exercise_sessions,
             "source": stmt.excluded.source,
             "collected_at": stmt.excluded.collected_at,
         },
