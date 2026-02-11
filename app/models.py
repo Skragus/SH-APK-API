@@ -22,6 +22,9 @@ class ShealthDaily(Base):
     exercise_sessions = Column(JSONB, nullable=True)
     source = Column(JSONB, nullable=False)
 
+    # "daily" = canonical/final, "intraday" = provisional/hot
+    source_type = Column(String, nullable=False, server_default="daily")
+
     collected_at = Column(DateTime(timezone=True), nullable=False)
     received_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

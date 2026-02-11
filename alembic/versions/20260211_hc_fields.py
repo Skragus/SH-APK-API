@@ -1,6 +1,6 @@
 """Add Health Connect JSONB fields to shealth_daily
 
-Revision ID: 20260211_add_health_connect_fields
+Revision ID: 20260211_hc_fields
 Revises: None
 Create Date: 2026-02-11
 """
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = "20260211_add_health_connect_fields"
+revision: str = "20260211_hc_fields"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

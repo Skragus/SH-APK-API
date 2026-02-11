@@ -43,29 +43,36 @@ async def health(db: AsyncSession = Depends(get_db)):
     return {"status": "ok"}
 
 
-@app.post("/v1/ingest/shealth/daily", response_model=IngestResponse)
-async def ingest_daily_stats(
+# ---------------------------------------------------------------------------
+# Shared upsert helper
+# ---------------------------------------------------------------------------
+def _serialize_optional(obj):
+    """model_dump a Pydantic object if present, else None."""
+    return obj.model_dump(mode="json") if obj else None
+
+
+async def _upsert_shealth(
     payload: DailyIngestRequest,
-    db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    source_type: str,
+    db: AsyncSession,
 ):
+    """Build and execute an idempotent upsert for shealth_daily."""
     ingest_data = {
         "device_id": payload.source.device_id,
         "date": payload.date,
         "schema_version": payload.schema_version,
         "steps_total": payload.steps_total,
         "sleep_sessions": payload.sleep_sessions,
-        "heart_rate_summary": payload.heart_rate_summary.model_dump(mode="json")
-        if payload.heart_rate_summary
+        "heart_rate_summary": _serialize_optional(payload.heart_rate_summary),
+        "body_metrics": _serialize_optional(payload.body_metrics),
+        "nutrition_summary": _serialize_optional(payload.nutrition_summary),
+        "exercise_sessions": [
+            s.model_dump(mode="json") for s in payload.exercise_sessions
+        ]
+        if payload.exercise_sessions
         else None,
-        "body_metrics": payload.body_metrics.model_dump(mode="json")
-        if payload.body_metrics
-        else None,
-        "nutrition_summary": payload.nutrition_summary.model_dump(mode="json")
-        if payload.nutrition_summary
-        else None,
-        "exercise_sessions": payload.exercise_sessions,
         "source": payload.source.model_dump(mode="json"),
+        "source_type": source_type,
         "collected_at": payload.source.collected_at,
     }
 
@@ -81,6 +88,7 @@ async def ingest_daily_stats(
             "nutrition_summary": stmt.excluded.nutrition_summary,
             "exercise_sessions": stmt.excluded.exercise_sessions,
             "source": stmt.excluded.source,
+            "source_type": stmt.excluded.source_type,
             "collected_at": stmt.excluded.collected_at,
         },
     )
@@ -89,19 +97,44 @@ async def ingest_daily_stats(
         await db.execute(stmt)
         await db.commit()
         logger.info(
-            "Ingest OK: device=%s date=%s steps=%d",
+            "Ingest OK [%s]: device=%s date=%s steps=%d",
+            source_type,
             payload.source.device_id,
             payload.date,
             payload.steps_total,
         )
         return IngestResponse()
     except Exception as e:
-        logger.error("Ingest failed: %s", e)
+        logger.error("Ingest failed [%s]: %s", source_type, e)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error during upsert",
         )
+
+
+# ---------------------------------------------------------------------------
+# Daily — canonical/final reconciliation for past dates
+# ---------------------------------------------------------------------------
+@app.post("/v1/ingest/shealth/daily", response_model=IngestResponse)
+async def ingest_daily(
+    payload: DailyIngestRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    return await _upsert_shealth(payload, source_type="daily", db=db)
+
+
+# ---------------------------------------------------------------------------
+# Intraday — provisional/hot cumulative snapshot for today
+# ---------------------------------------------------------------------------
+@app.post("/v1/ingest/shealth/intraday", response_model=IngestResponse)
+async def ingest_intraday(
+    payload: DailyIngestRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    return await _upsert_shealth(payload, source_type="intraday", db=db)
 
 
 # ---------------------------------------------------------------------------
