@@ -114,21 +114,90 @@ def _serialize_optional(obj):
     return obj.model_dump(mode="json") if obj else None
 
 
+def _validate_body_metrics(metrics):
+    """Validate body metrics and reject garbage data."""
+    if not metrics:
+        return None
+    
+    data = metrics.model_dump(mode="json") if hasattr(metrics, 'model_dump') else metrics
+    
+    weight = data.get('weight_kg')
+    body_fat = data.get('body_fat_percentage')
+    
+    # Validate weight (30-300 kg is reasonable human range)
+    if weight is not None and (weight < 30 or weight > 300):
+        logger.warning(f"Rejecting invalid weight: {weight} kg")
+        return None
+    
+    # Validate body fat percentage (3-70% is reasonable range)
+    if body_fat is not None and (body_fat < 3 or body_fat > 70):
+        logger.warning(f"Rejecting invalid body fat: {body_fat}%")
+        return None
+    
+    return data
+
+
+def _validate_heart_rate_summary(summary):
+    """Validate heart rate summary and reject garbage data."""
+    if not summary:
+        return None
+    
+    data = summary.model_dump(mode="json") if hasattr(summary, 'model_dump') else summary
+    
+    # Check common heart rate fields
+    for field in ['min_bpm', 'max_bpm', 'avg_bpm', 'resting_bpm']:
+        value = data.get(field)
+        if value is not None and (value < 30 or value > 250):
+            logger.warning(f"Rejecting invalid heart rate ({field}): {value} bpm")
+            return None
+    
+    return data
+
+
+def _validate_nutrition_summary(summary):
+    """Validate nutrition summary and reject garbage data."""
+    if not summary:
+        return None
+    
+    data = summary.model_dump(mode="json") if hasattr(summary, 'model_dump') else summary
+    
+    total_calories = data.get('total_calories')
+    
+    # Validate calories (0-10000 per day is reasonable)
+    if total_calories is not None and (total_calories < 0 or total_calories > 10000):
+        logger.warning(f"Rejecting invalid calories: {total_calories}")
+        return None
+    
+    # Validate macros are non-negative
+    for macro in ['protein_g', 'carbs_g', 'fat_g']:
+        value = data.get(macro)
+        if value is not None and value < 0:
+            logger.warning(f"Rejecting invalid macro ({macro}): {value}g")
+            return None
+    
+    return data
+
+
 async def _upsert_shealth(
     payload: DailyIngestRequest,
     source_type: str,
     db: AsyncSession,
 ):
     """Build and execute an idempotent upsert for shealth_daily."""
+    # Validate and sanitize data before ingesting
+    validated_body_metrics = _validate_body_metrics(payload.body_metrics)
+    validated_heart_rate = _validate_heart_rate_summary(payload.heart_rate_summary)
+    validated_nutrition = _validate_nutrition_summary(payload.nutrition_summary)
+    
     ingest_data = {
         "device_id": payload.source.device_id,
         "date": payload.date,
         "schema_version": payload.schema_version,
         "steps_total": payload.steps_total,
         "sleep_sessions": payload.sleep_sessions,
-        "heart_rate_summary": _serialize_optional(payload.heart_rate_summary),
-        "body_metrics": _serialize_optional(payload.body_metrics),
-        "nutrition_summary": _serialize_optional(payload.nutrition_summary),
+        "heart_rate_summary": validated_heart_rate,
+        "body_metrics": validated_body_metrics,
+        "nutrition_summary": validated_nutrition,
         "exercise_sessions": [
             s.model_dump(mode="json") for s in payload.exercise_sessions
         ]
