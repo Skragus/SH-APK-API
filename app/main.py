@@ -43,6 +43,69 @@ async def health(db: AsyncSession = Depends(get_db)):
     return {"status": "ok"}
 
 
+@app.get("/debug/status")
+async def debug_status(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Debug endpoint to check database status and recent ingests."""
+    try:
+        # Total record count
+        count_result = await db.execute(
+            text("SELECT COUNT(*) as total FROM shealth_daily")
+        )
+        total_records = count_result.scalar()
+
+        # Count by source type
+        type_result = await db.execute(
+            text("""
+                SELECT source_type, COUNT(*) as count 
+                FROM shealth_daily 
+                GROUP BY source_type
+            """)
+        )
+        by_type = {row[0]: row[1] for row in type_result.fetchall()}
+
+        # Last 10 records
+        recent_result = await db.execute(
+            text("""
+                SELECT date, device_id, steps_total, source_type, 
+                       collected_at, received_at
+                FROM shealth_daily 
+                ORDER BY received_at DESC 
+                LIMIT 10
+            """)
+        )
+        recent_records = [
+            {
+                "date": str(row[0]),
+                "device_id": row[1],
+                "steps_total": row[2],
+                "source_type": row[3],
+                "collected_at": row[4].isoformat() if row[4] else None,
+                "received_at": row[5].isoformat() if row[5] else None,
+            }
+            for row in recent_result.fetchall()
+        ]
+
+        # Last ingest timestamp
+        last_ingest = recent_records[0]["received_at"] if recent_records else None
+
+        return {
+            "status": "ok",
+            "total_records": total_records,
+            "by_source_type": by_type,
+            "last_ingest_at": last_ingest,
+            "recent_ingests": recent_records,
+        }
+    except Exception as e:
+        logger.error("Debug status failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Shared upsert helper
 # ---------------------------------------------------------------------------
