@@ -3,7 +3,7 @@ import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import text, case
 
 from app.config import settings
 from app.database import Base, engine, get_db
@@ -139,20 +139,48 @@ async def _upsert_shealth(
         "collected_at": payload.source.collected_at,
     }
 
-    # Idempotent upsert — on conflict update everything except received_at
+    # Idempotent upsert — on conflict update ONLY if new data is fresher (newer collected_at)
+    # This protects against Android sending stale/incomplete data after fresh data
     stmt = insert(ShealthDaily).values(**ingest_data)
     stmt = stmt.on_conflict_do_update(
         constraint="uq_device_date_version",
         set_={
-            "steps_total": stmt.excluded.steps_total,
-            "sleep_sessions": stmt.excluded.sleep_sessions,
-            "heart_rate_summary": stmt.excluded.heart_rate_summary,
-            "body_metrics": stmt.excluded.body_metrics,
-            "nutrition_summary": stmt.excluded.nutrition_summary,
-            "exercise_sessions": stmt.excluded.exercise_sessions,
-            "source": stmt.excluded.source,
-            "source_type": stmt.excluded.source_type,
-            "collected_at": stmt.excluded.collected_at,
+            "steps_total": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.steps_total),
+                else_=ShealthDaily.steps_total
+            ),
+            "sleep_sessions": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.sleep_sessions),
+                else_=ShealthDaily.sleep_sessions
+            ),
+            "heart_rate_summary": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.heart_rate_summary),
+                else_=ShealthDaily.heart_rate_summary
+            ),
+            "body_metrics": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.body_metrics),
+                else_=ShealthDaily.body_metrics
+            ),
+            "nutrition_summary": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.nutrition_summary),
+                else_=ShealthDaily.nutrition_summary
+            ),
+            "exercise_sessions": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.exercise_sessions),
+                else_=ShealthDaily.exercise_sessions
+            ),
+            "source": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.source),
+                else_=ShealthDaily.source
+            ),
+            "source_type": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.source_type),
+                else_=ShealthDaily.source_type
+            ),
+            "collected_at": case(
+                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.collected_at),
+                else_=ShealthDaily.collected_at
+            ),
         },
     )
 
