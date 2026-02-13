@@ -1,4 +1,6 @@
 import logging
+import asyncio
+import httpx
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from sqlalchemy.dialects.postgresql import insert
@@ -15,6 +17,53 @@ from app.schemas import DailyIngestRequest, IngestResponse
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("shealth-ingest")
+
+# ---------------------------------------------------------------------------
+# Telegram Notification
+# ---------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = "8528825923:AAEcWmc6aM6L5LYdeDMjLIVUVLw7CEFIVPc"
+TELEGRAM_CHAT_ID = "6934012305"  # Your user ID
+
+async def send_telegram_notification(sync_type: str, payload: DailyIngestRequest):
+    """Send formatted sync notification to Telegram."""
+    try:
+        # Build message
+        msg = f"✅ {sync_type.title()} Sync\n"
+        msg += f"📅 {payload.date}\n"
+        
+        if payload.steps_total and payload.steps_total > 0:
+            msg += f"🚶 {payload.steps_total:,} steps\n"
+        
+        if payload.body_metrics:
+            msg += f"⚖️ {payload.body_metrics.weight_kg:.1f} kg"
+            if payload.body_metrics.body_fat_percentage:
+                msg += f" ({payload.body_metrics.body_fat_percentage:.1f}% BF)"
+            msg += "\n"
+        
+        if payload.exercise_sessions:
+            msg += f"💪 {len(payload.exercise_sessions)} workout(s)\n"
+            for ex in payload.exercise_sessions:
+                msg += f"   • {ex.title} ({ex.duration_minutes} min)\n"
+        
+        if payload.nutrition_summary:
+            msg += f"🍽️ {payload.nutrition_summary.calories_total} cal"
+            if payload.nutrition_summary.protein_grams:
+                msg += f" ({payload.nutrition_summary.protein_grams:.1f}g protein)"
+            msg += "\n"
+        
+        # Send to Telegram
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": msg,
+                "parse_mode": "HTML"
+            }, timeout=5.0)
+        
+        logger.info(f"Sent Telegram notification for {sync_type} sync")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
+        # Don't raise - notification failure shouldn't break the sync
 
 # ---------------------------------------------------------------------------
 # App
@@ -282,7 +331,12 @@ async def ingest_daily(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    return await _upsert_shealth(payload, source_type="daily", db=db)
+    result = await _upsert_shealth(payload, source_type="daily", db=db)
+    
+    # Send Telegram notification asynchronously (don't block response)
+    asyncio.create_task(send_telegram_notification("daily", payload))
+    
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +348,12 @@ async def ingest_intraday(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    return await _upsert_shealth(payload, source_type="intraday", db=db)
+    result = await _upsert_shealth(payload, source_type="intraday", db=db)
+    
+    # Send Telegram notification asynchronously (don't block response)
+    asyncio.create_task(send_telegram_notification("intraday", payload))
+    
+    return result
 
 
 # ---------------------------------------------------------------------------
