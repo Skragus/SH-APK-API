@@ -21,9 +21,6 @@ logger = logging.getLogger("shealth-ingest")
 # ---------------------------------------------------------------------------
 # Telegram Notification
 # ---------------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = "8528825923:AAEcWmc6aM6L5LYdeDMjLIVUVLw7CEFIVPc"
-TELEGRAM_CHAT_ID = "6934012305"  # Your user ID
-
 async def send_telegram_notification(sync_type: str, payload: DailyIngestRequest):
     """Send formatted sync notification to Telegram."""
     try:
@@ -52,10 +49,10 @@ async def send_telegram_notification(sync_type: str, payload: DailyIngestRequest
             msg += "\n"
         
         # Send to Telegram
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
         async with httpx.AsyncClient() as client:
             await client.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID,
+                "chat_id": settings.TELEGRAM_CHAT_ID,
                 "text": msg,
                 "parse_mode": "HTML"
             }, timeout=5.0)
