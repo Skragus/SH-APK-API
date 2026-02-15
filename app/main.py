@@ -1,8 +1,9 @@
 import logging
 import asyncio
 import httpx
+import uuid
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status, Path
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, case
@@ -360,3 +361,42 @@ async def ingest_intraday(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+# ---------------------------------------------------------------------------
+# Agent endpoints — for external API / AI agent queries
+# ---------------------------------------------------------------------------
+@app.get("/health/connect/{record_id}")
+async def get_health_connect_record(
+    record_id: uuid.UUID = Path(..., description="UUID of the Health Connect record"),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Retrieve a specific Health Connect record by its UUID.
+    
+    Returns the full record from shealth_daily (contains both daily and intraday data).
+    """
+    try:
+        query = await db.execute(
+            text("SELECT * FROM shealth_daily WHERE id = :id"),
+            {"id": record_id}
+        )
+        record = query.mappings().first()
+        
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Record {record_id} not found"
+            )
+        
+        # Convert UUID to string for JSON serialization
+        record_dict = dict(record)
+        record_dict["id"] = str(record_dict["id"])
+        
+        return record_dict
+    except Exception as e:
+        logger.error(f"Failed to fetch record {record_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )
