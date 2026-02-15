@@ -325,6 +325,7 @@ async def ingest_daily(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
+    logger.info("Received DAILY sync request for date=%s from device=%s", payload.date, payload.source.device_id)
     result = await _upsert_shealth(payload, source_type="daily", db=db)
     
     # Send Telegram notification asynchronously (don't block response)
@@ -342,6 +343,7 @@ async def ingest_intraday(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
+    logger.info("Received INTRADAY sync request for date=%s from device=%s", payload.date, payload.source.device_id)
     result = await _upsert_shealth(payload, source_type="intraday", db=db)
     
     # Send Telegram notification asynchronously (don't block response)
