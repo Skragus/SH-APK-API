@@ -10,7 +10,7 @@ from sqlalchemy import text, case
 
 from app.config import settings
 from app.database import Base, engine, get_db
-from app.models import ShealthDaily
+from app.models import ShealthDaily, HealthConnectDaily, HealthConnectIntradayLog
 from app.schemas import DailyIngestRequest, IngestResponse
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,10 @@ async def _upsert_shealth(
     source_type: str,
     db: AsyncSession,
 ):
-    """Build and execute an idempotent upsert for shealth_daily."""
-    # Validate and sanitize data before ingesting
+    """Build and execute an idempotent upsert for shealth_daily (Legacy) 
+    AND the new HealthConnectDaily / HealthConnectIntradayLog structure."""
+    
+    # Validate and sanitize data
     validated_body_metrics = _validate_body_metrics(payload.body_metrics)
     validated_heart_rate = _validate_heart_rate_summary(payload.heart_rate_summary)
     validated_nutrition = _validate_nutrition_summary(payload.nutrition_summary)
@@ -255,53 +257,47 @@ async def _upsert_shealth(
         "collected_at": payload.source.collected_at,
     }
 
-    # Idempotent upsert — on conflict update ONLY if new data is fresher (newer collected_at)
-    # This protects against Android sending stale/incomplete data after fresh data
-    stmt = insert(ShealthDaily).values(**ingest_data)
-    stmt = stmt.on_conflict_do_update(
+    # 1. LEGACY: Upsert to shealth_daily
+    stmt_legacy = insert(ShealthDaily).values(**ingest_data)
+    stmt_legacy = stmt_legacy.on_conflict_do_update(
         constraint="uq_device_date_version",
         set_={
-            "steps_total": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.steps_total),
-                else_=ShealthDaily.steps_total
-            ),
-            "sleep_sessions": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.sleep_sessions),
-                else_=ShealthDaily.sleep_sessions
-            ),
-            "heart_rate_summary": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.heart_rate_summary),
-                else_=ShealthDaily.heart_rate_summary
-            ),
-            "body_metrics": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.body_metrics),
-                else_=ShealthDaily.body_metrics
-            ),
-            "nutrition_summary": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.nutrition_summary),
-                else_=ShealthDaily.nutrition_summary
-            ),
-            "exercise_sessions": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.exercise_sessions),
-                else_=ShealthDaily.exercise_sessions
-            ),
-            "source": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.source),
-                else_=ShealthDaily.source
-            ),
-            "source_type": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.source_type),
-                else_=ShealthDaily.source_type
-            ),
-            "collected_at": case(
-                (stmt.excluded.collected_at > ShealthDaily.collected_at, stmt.excluded.collected_at),
-                else_=ShealthDaily.collected_at
-            ),
+            "steps_total": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.steps_total), else_=ShealthDaily.steps_total),
+            "sleep_sessions": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.sleep_sessions), else_=ShealthDaily.sleep_sessions),
+            "heart_rate_summary": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.heart_rate_summary), else_=ShealthDaily.heart_rate_summary),
+            "body_metrics": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.body_metrics), else_=ShealthDaily.body_metrics),
+            "nutrition_summary": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.nutrition_summary), else_=ShealthDaily.nutrition_summary),
+            "exercise_sessions": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.exercise_sessions), else_=ShealthDaily.exercise_sessions),
+            "source": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.source), else_=ShealthDaily.source),
+            "source_type": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.source_type), else_=ShealthDaily.source_type),
+            "collected_at": case((stmt_legacy.excluded.collected_at > ShealthDaily.collected_at, stmt_legacy.excluded.collected_at), else_=ShealthDaily.collected_at),
         },
     )
 
+    # 2. NEW: Upsert to health_connect_daily
+    stmt_daily = insert(HealthConnectDaily).values(**ingest_data)
+    stmt_daily = stmt_daily.on_conflict_do_update(
+        constraint="uq_health_connect_daily_device_date_version",
+        set_={
+            "steps_total": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.steps_total), else_=HealthConnectDaily.steps_total),
+            "sleep_sessions": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.sleep_sessions), else_=HealthConnectDaily.sleep_sessions),
+            "heart_rate_summary": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.heart_rate_summary), else_=HealthConnectDaily.heart_rate_summary),
+            "body_metrics": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.body_metrics), else_=HealthConnectDaily.body_metrics),
+            "nutrition_summary": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.nutrition_summary), else_=HealthConnectDaily.nutrition_summary),
+            "exercise_sessions": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.exercise_sessions), else_=HealthConnectDaily.exercise_sessions),
+            "source": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.source), else_=HealthConnectDaily.source),
+            "source_type": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.source_type), else_=HealthConnectDaily.source_type),
+            "collected_at": case((stmt_daily.excluded.collected_at > HealthConnectDaily.collected_at, stmt_daily.excluded.collected_at), else_=HealthConnectDaily.collected_at),
+        },
+    )
+
+    # 3. NEW: Append to health_connect_intraday_logs (NO UPSERT, just INSERT)
+    stmt_log = insert(HealthConnectIntradayLog).values(**ingest_data)
+
     try:
-        await db.execute(stmt)
+        await db.execute(stmt_legacy)
+        await db.execute(stmt_daily)
+        await db.execute(stmt_log)
         await db.commit()
         logger.info(
             "Ingest OK [%s]: device=%s date=%s steps=%d",
@@ -316,7 +312,7 @@ async def _upsert_shealth(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error during upsert",
+            detail="Database error during sync",
         )
 
 
@@ -373,8 +369,9 @@ async def get_latest_health_record(
 ):
     """Retrieve the absolute latest Health Connect record (provisional or canonical)."""
     try:
+        # Use the new summary table for latest state
         query = await db.execute(
-            text("SELECT * FROM shealth_daily ORDER BY received_at DESC LIMIT 1")
+            text("SELECT * FROM health_connect_daily ORDER BY date DESC, collected_at DESC LIMIT 1")
         )
         record = query.mappings().first()
         
@@ -398,16 +395,21 @@ async def get_health_connect_record(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """Retrieve a specific Health Connect record by its UUID.
-    
-    Returns the full record from shealth_daily (contains both daily and intraday data).
-    """
+    """Retrieve a specific Health Connect record by its UUID."""
     try:
+        # Try summary table first, then logs
         query = await db.execute(
-            text("SELECT * FROM shealth_daily WHERE id = :id"),
+            text("SELECT * FROM health_connect_daily WHERE id = :id"),
             {"id": record_id}
         )
         record = query.mappings().first()
+        
+        if not record:
+            query = await db.execute(
+                text("SELECT * FROM health_connect_intraday_logs WHERE id = :id"),
+                {"id": record_id}
+            )
+            record = query.mappings().first()
         
         if not record:
             raise HTTPException(
