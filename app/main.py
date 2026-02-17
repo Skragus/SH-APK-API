@@ -7,7 +7,7 @@ from datetime import date as py_date
 from fastapi import Depends, FastAPI, Header, HTTPException, status, Path
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, case
+from sqlalchemy import text, case, func
 
 from app.config import settings
 from app.database import Base, engine, get_db
@@ -254,8 +254,23 @@ async def _upsert_shealth(
         "source": payload.source.model_dump(mode="json"),
     }
 
-    # 1. LEGACY: Upsert to shealth_daily
-    stmt_legacy = insert(ShealthDaily).values(**ingest_data)
+    # 1. LEGACY: Upsert to shealth_daily (using raw_data structure)
+    # Build legacy data structure for backwards compatibility
+    legacy_data = {
+        "device_id": payload.source.device_id,
+        "date": payload.date,
+        "schema_version": payload.schema_version,
+        "steps_total": payload.steps_total,
+        "sleep_sessions": payload.sleep_sessions,
+        "heart_rate_summary": payload.heart_rate_summary.model_dump(mode="json") if payload.heart_rate_summary else None,
+        "body_metrics": payload.body_metrics.model_dump(mode="json") if payload.body_metrics else None,
+        "nutrition_summary": payload.nutrition_summary.model_dump(mode="json") if payload.nutrition_summary else None,
+        "exercise_sessions": [s.model_dump(mode="json") for s in payload.exercise_sessions] if payload.exercise_sessions else None,
+        "source": payload.source.model_dump(mode="json"),
+        "source_type": source_type,
+        "collected_at": payload.source.collected_at,
+    }
+    stmt_legacy = insert(ShealthDaily).values(**legacy_data)
     stmt_legacy = stmt_legacy.on_conflict_do_update(
         constraint="uq_device_date_version",
         set_={
