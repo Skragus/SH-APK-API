@@ -305,7 +305,9 @@ async def _upsert_shealth(
     try:
         await db.execute(stmt_legacy)
         await db.execute(stmt_daily)
-        await db.execute(stmt_log)
+        # Only append to intraday_logs for actual intraday syncs, not daily reconciliations
+        if source_type == "intraday":
+            await db.execute(stmt_log)
         await db.commit()
         logger.info(
             "Ingest OK [%s]: device=%s date=%s steps=%d",
