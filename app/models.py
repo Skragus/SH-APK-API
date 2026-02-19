@@ -73,12 +73,14 @@ class HealthConnectIntradayLog(Base):
     source = Column(JSONB, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "device_id",
-            "date",
-            "collected_at",
-            name="uq_intraday_device_date_collected",
-        ),
+        # NOTE: Unique constraint disabled — allow all intraday syncs to append.
+        # revisit this if we see actual duplicate garbage after a few days
+        # UniqueConstraint(
+        #     "device_id",
+        #     "date",
+        #     "collected_at",
+        #     name="uq_intraday_device_date_collected",
+        # ),
         Index("ix_intraday_logs_date_collected", "date", "collected_at"),
         Index("ix_intraday_logs_device_date", "device_id", "date"),
     )

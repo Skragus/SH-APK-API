@@ -301,28 +301,21 @@ async def _upsert_shealth(
         },
     )
 
-    # 3. NEW: Append to health_connect_intraday_logs (insert or ignore on duplicate)
+    # 3. NEW: Append to health_connect_intraday_logs (always insert, no conflict checking)
     intraday_inserted = False
     stmt_log = None
     if source_type == "intraday":
         stmt_log = insert(HealthConnectIntradayLog).values(**core_data)
-        stmt_log = stmt_log.on_conflict_do_nothing(
-            constraint="uq_intraday_device_date_collected"
-        ).returning(HealthConnectIntradayLog.id)
+        # NOTE: constraint removed — allow all syncs to append
+        # revisit if we see actual duplicates after a few days
 
     try:
         await db.execute(stmt_legacy)
         await db.execute(stmt_daily)
         # Only append to intraday_logs for actual intraday syncs, not daily reconciliations
         if source_type == "intraday" and stmt_log is not None:
-            try:
-                result = await db.execute(stmt_log)
-                # If we got a row back, insert succeeded; if None, it was a duplicate
-                row = result.scalar_one_or_none()
-                intraday_inserted = row is not None
-            except Exception as log_error:
-                logger.warning("Intraday log insert failed (may be duplicate): %s", log_error)
-                intraday_inserted = False
+            await db.execute(stmt_log)
+            intraday_inserted = True
         await db.commit()
         logger.info(
             "Ingest OK [%s]: device=%s date=%s steps=%d inserted=%s",
