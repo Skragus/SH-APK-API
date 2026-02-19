@@ -374,7 +374,6 @@ async def ingest_intraday(
     result = await _upsert_shealth(payload, source_type="intraday", db=db)
     
     # Send Telegram notification for all intraday syncs (like daily endpoint)
-    # Note: intraday_inserted indicates if it was a new log entry, but we notify for all syncs
     asyncio.create_task(send_telegram_notification("intraday", payload))
     
     return result
