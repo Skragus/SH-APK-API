@@ -62,7 +62,8 @@ async def send_telegram_notification(sync_type: str, payload: DailyIngestRequest
         
         logger.info(f"Sent Telegram notification for {sync_type} sync")
     except Exception as e:
-        logger.error(f"Failed to send Telegram notification: {e}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Failed to send Telegram notification: {e}\n{error_traceback}")
         # Don't raise - notification failure shouldn't break the sync
 
 # ---------------------------------------------------------------------------
@@ -372,11 +373,9 @@ async def ingest_intraday(
     logger.info("Received INTRADAY sync request for date=%s from device=%s", payload.date, payload.source.device_id)
     result = await _upsert_shealth(payload, source_type="intraday", db=db)
     
-    # Only send Telegram notification if we actually inserted a new row (not a duplicate)
-    if result.intraday_inserted:
-        asyncio.create_task(send_telegram_notification("intraday", payload))
-    else:
-        logger.info("Skipping Telegram notification for duplicate intraday sync")
+    # Send Telegram notification for all intraday syncs (like daily endpoint)
+    # Note: intraday_inserted indicates if it was a new log entry, but we notify for all syncs
+    asyncio.create_task(send_telegram_notification("intraday", payload))
     
     return result
 
