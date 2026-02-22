@@ -2,6 +2,7 @@ import logging
 import asyncio
 import httpx
 import uuid
+import traceback
 from datetime import date as py_date
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status, Path
@@ -61,7 +62,8 @@ async def send_telegram_notification(sync_type: str, payload: DailyIngestRequest
         
         logger.info(f"Sent Telegram notification for {sync_type} sync")
     except Exception as e:
-        logger.error(f"Failed to send Telegram notification: {e}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Failed to send Telegram notification: {e}\n{error_traceback}")
         # Don't raise - notification failure shouldn't break the sync
 
 # ---------------------------------------------------------------------------
@@ -243,13 +245,13 @@ async def _upsert_shealth(
     
     # Agnostic envelope — everything lives in raw_data
     # No special fields extracted, completely neutral storage
+    # Note: received_at is omitted - it has server_default=func.now() in both models
     core_data = {
         "device_id": payload.source.device_id,
         "date": payload.date,
         "schema_version": payload.schema_version,
         "source_type": source_type,
         "collected_at": payload.source.collected_at,
-        "received_at": func.now(),
         "raw_data": raw_payload,  # Everything lives here
         "source": payload.source.model_dump(mode="json"),
     }
@@ -299,33 +301,38 @@ async def _upsert_shealth(
         },
     )
 
-    # 3. NEW: Append to health_connect_intraday_logs (insert or ignore on duplicate)
-    stmt_log = insert(HealthConnectIntradayLog).values(**core_data)
-    stmt_log = stmt_log.on_conflict_do_nothing(
-        constraint="uq_intraday_device_date_collected"
-    )
+    # 3. NEW: Append to health_connect_intraday_logs (always insert, no conflict checking)
+    intraday_inserted = False
+    stmt_log = None
+    if source_type == "intraday":
+        stmt_log = insert(HealthConnectIntradayLog).values(**core_data)
+        # NOTE: constraint removed — allow all syncs to append
+        # revisit if we see actual duplicates after a few days
 
     try:
         await db.execute(stmt_legacy)
         await db.execute(stmt_daily)
         # Only append to intraday_logs for actual intraday syncs, not daily reconciliations
-        if source_type == "intraday":
+        if source_type == "intraday" and stmt_log is not None:
             await db.execute(stmt_log)
+            intraday_inserted = True
         await db.commit()
         logger.info(
-            "Ingest OK [%s]: device=%s date=%s steps=%d",
+            "Ingest OK [%s]: device=%s date=%s steps=%d inserted=%s",
             source_type,
             payload.source.device_id,
             payload.date,
             payload.steps_total,
+            intraday_inserted if source_type == "intraday" else "N/A",
         )
-        return IngestResponse()
+        return IngestResponse(intraday_inserted=intraday_inserted)
     except Exception as e:
-        logger.error("Ingest failed [%s]: %s", source_type, e)
+        error_traceback = traceback.format_exc()
+        logger.error("Ingest failed [%s]: %s\n%s", source_type, e, error_traceback)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error during sync",
+            detail=f"Database error during sync: {str(e)}",
         )
 
 
@@ -359,7 +366,7 @@ async def ingest_intraday(
     logger.info("Received INTRADAY sync request for date=%s from device=%s", payload.date, payload.source.device_id)
     result = await _upsert_shealth(payload, source_type="intraday", db=db)
     
-    # Send Telegram notification asynchronously (don't block response)
+    # Send Telegram notification for all intraday syncs (like daily endpoint)
     asyncio.create_task(send_telegram_notification("intraday", payload))
     
     return result
