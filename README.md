@@ -1,52 +1,19 @@
 # SH-APK-API
 
-**Health Data Ingestion & Query API**
+**Health Data Ingestion API**
 
-A production-ready FastAPI service that ingests, stores, and serves health metrics from Android devices. Built for real-time sync with Telegram notifications and historical trend analysis.
+A FastAPI service that receives health metrics from Android devices, stores them in PostgreSQL, and sends Telegram notifications on sync. Built for Samsung Health / Health Connect integration.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| **API** | FastAPI (Python 3.12) |
-| **Database** | PostgreSQL 16 + asyncpg |
-| **ORM** | SQLAlchemy 2.0 (async) |
-| **Migrations** | Alembic |
-| **Notifications** | Telegram Bot API |
-| **Deployment** | Railway (Docker) |
-| **Validation** | Pydantic v2 |
-
----
-
-## Architecture
-
-```
-Android Device (Health Connect)
-    ↓
-Custom APK → POST /health/connect/daily
-    ↓
-FastAPI (Validation + Auth)
-    ↓
-PostgreSQL (Dual Storage Strategy)
-    ├── health_connect_daily (upsert, current state)
-    └── health_connect_intraday_logs (append-only, time series)
-    ↓
-Telegram Bot (Sync Notifications)
-```
-
-### Storage Strategy
-
-**Daily Table (`health_connect_daily`)**
-- One row per device per day
-- Upsert semantics: always the latest sync
-- Fast queries for current state
-
-**Intraday Logs (`health_connect_intraday_logs`)**
-- Append-only: every sync creates a row
-- Time-series data for trend analysis
-- JSONB payload for schema flexibility
+- **Framework**: FastAPI (Python 3.12)
+- **Database**: PostgreSQL 16 + asyncpg
+- **ORM**: SQLAlchemy 2.0 (async)
+- **Migrations**: Alembic
+- **Notifications**: Telegram Bot API
+- **Deployment**: Railway (Docker)
 
 ---
 
@@ -55,14 +22,14 @@ Telegram Bot (Sync Notifications)
 ### Health & Status
 
 ```http
-GET /health          → Database connectivity check
-GET /debug/status    → Sync statistics and queue status
+GET /health                    → Database connectivity check
+GET /debug/status              → Sync statistics
 ```
 
-### Data Ingestion
+### Data Ingestion (requires API key)
 
 ```http
-POST /health/connect/daily
+POST /v1/ingest/shealth/daily
 Content-Type: application/json
 X-API-Key: <secret>
 
@@ -79,73 +46,85 @@ X-API-Key: <secret>
 }
 ```
 
-### Data Retrieval
+```http
+POST /v1/ingest/shealth/intraday
+```
+
+### Data Retrieval (requires API key)
 
 ```http
-GET /health/connect/latest           → Current day summary
-GET /health/connect/{uuid}           → Specific record by ID
-GET /kernel/signals                  → Signal catalog + semantics
-GET /kernel/data/latest              → Latest intraday sync
-GET /kernel/data/history?signal=X    → Historical signal data
-GET /kernel/goals/progress           → Goal tracking with status
+GET /health/connect/latest                 → Most recent daily record
+GET /health/connect/range                  → Date range query
+GET /health/connect/by-date/{YYYY-MM-DD}   → Specific date
+GET /health/connect/{record_id}            → By UUID
 ```
 
 ---
 
-## Key Features
+## Architecture
 
-- **Async Everything**: FastAPI + asyncpg for high concurrency
-- **Schema Evolution**: JSONB payloads with versioned migrations
-- **Real-time Notifications**: Telegram bot pings on every sync
-- **Goal Tracking**: P1/P2/P3 tiered goal system with progress calculation
-- **Signal Semantics**: Standardized health metric definitions (steps, nutrition, sleep)
+```
+Android (Health Connect)
+    ↓
+POST /v1/ingest/shealth/*
+    ↓
+FastAPI → Validation → PostgreSQL
+    ↓
+Telegram Notification
+```
+
+### Database Schema
+
+**health_connect_daily** — Upsert table, one row per device per day  
+**health_connect_intraday_logs** — Append-only sync history
+
+See [`DATABASE_README.md`](./DATABASE_README.md) for full schema.
 
 ---
 
 ## Local Development
 
 ```bash
-# Clone
 git clone https://github.com/Skragus/SH-APK-API.git
 cd SH-APK-API
 
-# Setup Python
 python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
+source venv/bin/activate
 pip install -r requirements.txt
 
-# Environment
 cp .env.example .env
-# Edit .env with your DATABASE_URL, API_KEY, TELEGRAM tokens
+# Edit .env: DATABASE_URL, API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-# Database migrations
 alembic upgrade head
-
-# Run
 uvicorn app.main:app --reload
 ```
 
 ---
 
-## Deployment
+## Environment Variables
 
-Deployed on Railway with auto-deploy from `main` branch:
-
-```yaml
-# railway.yml (implicit)
-build:
-  dockerfile: Dockerfile
-deploy:
-  healthcheck:
-    path: /health
-    port: 8000
-```
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `API_KEY` | Secret for X-API-Key header auth |
+| `TELEGRAM_BOT_TOKEN` | Bot token for sync notifications |
+| `TELEGRAM_CHAT_ID` | Chat ID to notify |
 
 ---
 
-## Database Schema
+## Deployment
 
-See [`DATABASE_README.md`](./DATABASE_README.md) for full schema documentation and query patterns.
+Railway auto-deploy from `master` branch:
+
+```dockerfile
+# Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
 ---
 
