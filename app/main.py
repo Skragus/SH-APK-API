@@ -394,6 +394,7 @@ async def get_record_by_date(
             SELECT device_id, date, collected_at, received_at, schema_version, source_app, raw_json
             FROM health_connect_daily
             WHERE date = :date
+            ORDER BY received_at DESC
             LIMIT 1
         """),
         {"date": datetime.strptime(date, "%Y-%m-%d").date()},
