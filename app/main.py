@@ -5,7 +5,7 @@ import json
 import logging
 import asyncio
 import uuid
-from pathlib import Path
+from pathlib import Path as FilePath
 import httpx
 from datetime import date as py_date, datetime, timezone
 
@@ -26,7 +26,7 @@ db_write_logger.setLevel(logging.INFO)
 db_write_logger.propagate = False
 if not db_write_logger.handlers:
     try:
-        log_file_path = Path(settings.DB_WRITE_LOG_FILE)
+        log_file_path = FilePath(settings.DB_WRITE_LOG_FILE)
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(
