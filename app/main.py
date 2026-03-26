@@ -25,13 +25,17 @@ db_write_logger = logging.getLogger("health-ingest.db-writes")
 db_write_logger.setLevel(logging.INFO)
 db_write_logger.propagate = False
 if not db_write_logger.handlers:
-    log_file_path = Path(settings.DB_WRITE_LOG_FILE)
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    )
-    db_write_logger.addHandler(file_handler)
+    try:
+        log_file_path = Path(settings.DB_WRITE_LOG_FILE)
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        db_write_logger.addHandler(file_handler)
+    except Exception as e:
+        # Do not block API startup if file logging path is unavailable.
+        logger.warning(f"DB write file logging disabled: {e}")
 
 app = FastAPI(title="Health Connect Ingest API", version="2.0.0")
 
