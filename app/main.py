@@ -251,15 +251,20 @@ async def _send_notification(sync_type: str, payload: RawHealthConnectIngest):
         
         url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
         async with httpx.AsyncClient() as client:
-            await client.post(url, json={
+            response = await client.post(url, json={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
                 "text": "\n".join(lines),
                 "parse_mode": "HTML"
             }, timeout=5.0)
+            response.raise_for_status()
         
         logger.info(f"Telegram notification sent for {sync_type} sync")
     except Exception as e:
-        logger.error(f"Failed to send Telegram notification: {e}")
+        logger.error(
+            "Failed to send Telegram notification for %s sync: %s",
+            sync_type,
+            e,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +331,7 @@ async def ingest_daily(
         },
     )
     existing = existing_result.mappings().first()
+    should_notify_daily = existing is None
 
     if existing and existing["payload_hash"] == payload_hash:
         logger.info(
@@ -366,7 +372,8 @@ async def ingest_daily(
         rows_affected=1,
     )
 
-    asyncio.create_task(_send_notification("daily", payload))
+    if should_notify_daily:
+        asyncio.create_task(_send_notification("daily", payload))
     logger.info(f"Inserted daily record for {payload.date}")
     return IngestResponse(inserted=True, id=row_id)
 
