@@ -5,8 +5,9 @@ import json
 import logging
 import asyncio
 import uuid
+from pathlib import Path
 import httpx
-from datetime import date as py_date, datetime
+from datetime import date as py_date, datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status, Path, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,47 @@ from app.schemas import RawHealthConnectIngest, IngestResponse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("health-ingest")
 
+db_write_logger = logging.getLogger("health-ingest.db-writes")
+db_write_logger.setLevel(logging.INFO)
+db_write_logger.propagate = False
+if not db_write_logger.handlers:
+    log_file_path = Path(settings.DB_WRITE_LOG_FILE)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    )
+    db_write_logger.addHandler(file_handler)
+
 app = FastAPI(title="Health Connect Ingest API", version="2.0.0")
+
+
+def _log_db_write(
+    *,
+    endpoint: str,
+    operation: str,
+    table: str,
+    device_id: str,
+    ingest_date: py_date,
+    collected_at: datetime,
+    row_id: uuid.UUID | None = None,
+    rows_affected: int | None = None,
+):
+    """Write a structured audit line for ingest-triggered DB mutations."""
+    record = {
+        "event_ts_utc": datetime.now(timezone.utc).isoformat(),
+        "endpoint": endpoint,
+        "operation": operation,
+        "table": table,
+        "device_id": device_id,
+        "date": ingest_date.isoformat(),
+        "collected_at": collected_at.isoformat(),
+    }
+    if row_id is not None:
+        record["row_id"] = str(row_id)
+    if rows_affected is not None:
+        record["rows_affected"] = rows_affected
+    db_write_logger.info(json.dumps(record, separators=(",", ":")))
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +327,16 @@ async def ingest_daily(
         }
     )
     await db.commit()
+    _log_db_write(
+        endpoint="/v1/ingest/daily",
+        operation="insert",
+        table="health_connect_daily",
+        device_id=payload.source.device_id,
+        ingest_date=payload.date,
+        collected_at=payload.source.collected_at,
+        row_id=row_id,
+        rows_affected=1,
+    )
 
     asyncio.create_task(_send_notification("daily", payload))
     logger.info(f"Inserted daily record for {payload.date}")
@@ -298,10 +349,10 @@ async def ingest_intraday(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """Intraday snapshot ingestion — append-only to logs table.
+    """Intraday snapshot ingestion — latest snapshot per day.
     
-    Creates full audit trail of every sync. Does NOT touch daily table.
-    Query with ORDER BY collected_at DESC LIMIT 1 for latest snapshot.
+    Keeps one row per (device_id, date) in the intraday table by replacing
+    the previous same-day snapshot on each sync. Does NOT touch daily table.
     """
     logger.info(f"Intraday ingest: {payload.date} from {payload.source.device_id}")
     payload = _validate_raw_payload(payload, "intraday")
@@ -309,6 +360,18 @@ async def ingest_intraday(
         payload = payload.model_copy(update={"record_type": "intraday"})
     payload_hash = payload.payload_hash or _canonical_payload_hash(payload.raw_json)
     row_id = payload.id or uuid.uuid4()
+
+    # Overwrite behavior: intraday should not accumulate within the same day.
+    delete_result = await db.execute(
+        text("""
+            DELETE FROM health_connect_intraday_logs
+            WHERE device_id = :device_id AND date = :date
+        """),
+        {
+            "device_id": payload.source.device_id,
+            "date": payload.date,
+        }
+    )
 
     result = await db.execute(
         text("""
@@ -332,6 +395,25 @@ async def ingest_intraday(
     )
     await db.commit()
     inserted_id = result.scalar()
+    _log_db_write(
+        endpoint="/v1/ingest/intraday",
+        operation="delete",
+        table="health_connect_intraday_logs",
+        device_id=payload.source.device_id,
+        ingest_date=payload.date,
+        collected_at=payload.source.collected_at,
+        rows_affected=delete_result.rowcount or 0,
+    )
+    _log_db_write(
+        endpoint="/v1/ingest/intraday",
+        operation="insert",
+        table="health_connect_intraday_logs",
+        device_id=payload.source.device_id,
+        ingest_date=payload.date,
+        collected_at=payload.source.collected_at,
+        row_id=inserted_id,
+        rows_affected=1,
+    )
 
     asyncio.create_task(_send_notification("intraday", payload))
     return IngestResponse(inserted=True, id=inserted_id)
@@ -459,9 +541,9 @@ async def get_intraday_logs(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """Query intraday audit logs (append-only stream).
+    """Query latest intraday snapshots (one row per device/date).
     
-    Use for debugging sync issues or building time-series visualizations.
+    Use for inspecting the current intraday state.
     Results ordered by collected_at DESC (newest first).
     """
     conditions = []
