@@ -300,9 +300,10 @@ async def ingest_daily(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """Canonical daily ingestion — simple insert for backfill.
+    """Canonical daily ingestion with change-based history.
     
-    Temporarily simplified: always inserts. Upsert logic to be restored.
+    For a given (device_id, date), inserts a new row only when payload content
+    changes. Unchanged payloads are treated as no-op writes.
     """
     logger.info(f"Daily ingest: {payload.date} from {payload.source.device_id}")
     payload = _validate_raw_payload(payload, "daily")
@@ -310,6 +311,29 @@ async def ingest_daily(
         payload = payload.model_copy(update={"record_type": "daily"})
     payload_hash = payload.payload_hash or _canonical_payload_hash(payload.raw_json)
     row_id = payload.id or uuid.uuid4()
+
+    existing_result = await db.execute(
+        text("""
+            SELECT id, payload_hash
+            FROM health_connect_daily
+            WHERE device_id = :device_id AND date = :date
+            ORDER BY collected_at DESC, received_at DESC
+            LIMIT 1
+        """),
+        {
+            "device_id": payload.source.device_id,
+            "date": payload.date,
+        },
+    )
+    existing = existing_result.mappings().first()
+
+    if existing and existing["payload_hash"] == payload_hash:
+        logger.info(
+            "Skipped daily insert (unchanged payload): date=%s device=%s",
+            payload.date,
+            payload.source.device_id,
+        )
+        return IngestResponse(inserted=False, id=existing["id"])
 
     await db.execute(
         text("""
